@@ -1,0 +1,66 @@
+name: Build & Publish 🐳
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.CR_USER }}
+          password: ${{ secrets.CR_PAT }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./appdemo/frontend
+          file: ./appdemo/frontend/Dockerfile
+          push: true
+          tags: ignaciosa/front:${{ github.sha }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./appdemo/backend
+          file: ./appdemo/backend/Dockerfile
+          push: true
+          tags: ignaciosa/back:${{ github.sha }}
+
+      # 🧬 Actualiza los manifiestos con los nuevos tags
+      - name: Checkout manifests repo
+        uses: actions/checkout@v4
+        with:
+          repository: IgnacioSaAn/manifiestosFinal
+          token: ${{ secrets.GIT_PAT }}
+          path: manifests
+          ref: dev
+
+      - name: Update image tags in manifests
+        run: |
+          cd manifests
+          git switch dev
+
+          # Actualiza imagen de frontend
+          yq e -i '.spec.template.spec.containers[0].image = "ignaciosa/front:${{ github.sha }}"' deployment.yaml
+
+          # Actualiza imagen de backend
+          yq e -i '.spec.template.spec.containers[0].image = "ignaciosa/back:${{ github.sha }}"' deployment_back.yaml
+
+          git config user.email "ci-bot@users.noreply.github.com"
+          git config user.name  "ci-bot"
+          git commit -am "ci: update front/back image tags to ${{ github.sha }}"
+          git push origin dev
