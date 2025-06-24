@@ -1,26 +1,36 @@
-name: Build 🐳 · Push · Patch Manifests
+name: Build 🐳 · Push · Patch DEV Manifests
 
 on:
   push:
-    branches: [dev]          # rama del código que dispara el pipeline
+    branches: [ dev ]          # ← se ejecuta en cada push a la rama dev
 
 env:
   REGISTRY: docker.io
   IMAGE_FRONT: ignaciosa/front
   IMAGE_BACK:  ignaciosa/back
+  TAG: latest                  # tag “móvil” (se sobreescribe en cada build)
+
+  # Repositorio de manifiestos
+  MANIFESTS_REPO: Estanislao-Tello/ManifiestosEGI
+  OVERLAY_DEV:   manifests/ManifiestosEGI/overlays/dev/patch-images.yaml
 
 jobs:
   build-push-patch:
     runs-on: ubuntu-latest
     permissions:
-      contents: read          # para clonar y hacer commit
-      packages: write         # para publicar imágenes en Docker Hub
+      contents: read           # leer este repo y commit en el otro
+      packages: write          # subir imágenes a Docker Hub
 
     steps:
-    # 1) Checkout del código fuente
+
+    ############################################################
+    # 1) Checkout del código fuente (este repo, rama dev)
+    ############################################################
     - uses: actions/checkout@v4
 
-    # 2) Builder + login a Docker Hub
+    ############################################################
+    # 2) Build & push imágenes :latest
+    ############################################################
     - name: Set up Buildx
       uses: docker/setup-buildx-action@v3
 
@@ -30,61 +40,73 @@ jobs:
         username: ${{ secrets.CR_USER }}
         password: ${{ secrets.CR_PAT }}
 
-    # 3) Build & push FRONTEND  —► tag :latest
-    - name: Build & push frontend
+    - name: Build & push frontend (:latest)
       uses: docker/build-push-action@v5
       with:
         context: ./appdemo/frontend
         file: ./appdemo/frontend/Dockerfile
         push: true
-        tags: ${{ env.IMAGE_FRONT }}:latest
+        tags: ${{ env.IMAGE_FRONT }}:${{ env.TAG }}
 
-    # 4) Build & push BACKEND  —► tag :latest
-    - name: Build & push backend
+    - name: Build & push backend (:latest)
       uses: docker/build-push-action@v5
       with:
         context: ./appdemo/backend
         file: ./appdemo/backend/Dockerfile
         push: true
-        tags: ${{ env.IMAGE_BACK }}:latest
+        tags: ${{ env.IMAGE_BACK }}:${{ env.TAG }}
 
-    # 5) Clonar el repo de manifiestos
+    ############################################################
+    # 3) Checkout del repo de manifiestos
+    ############################################################
     - name: Checkout manifests repo
       uses: actions/checkout@v4
       with:
-        repository: Estanislao-Tello/ManifiestosEGI   # ⚠ ajusta si cambia
-        token: ${{ secrets.GIT_PAT }}                 # PAT con permiso de push
-        path: manifests                               # carpeta de destino
-        ref: main                                     # rama de manifiestos
+        repository: ${{ env.MANIFESTS_REPO }}
+        token: ${{ secrets.GIT_PAT }}         # PAT con permiso de push
+        path: manifests
+        ref: main                            # ajusta si tu rama es otra
 
-    # 6) Parchear patch-images.yaml con tag :latest
-    - name: Update image tags in patch-images.yaml
+    ############################################################
+    # 4) Parchear overlay DEV
+    ############################################################
+    - name: Patch images & add build timestamp
+      working-directory: manifests/ManifiestosEGI/overlays/dev
+      env:
+        FRONT_REF: "${{ env.IMAGE_FRONT }}:${{ env.TAG }}"
+        BACK_REF:  "${{ env.IMAGE_BACK }}:${{ env.TAG }}"
+        BUILD_TS:  "${{ github.run_id }}-${{ github.run_attempt }}"  # id único
       run: |
-        cd manifests/ManifiestosEGI/overlays/dev
-
-        # Instalar yq (binario estático)
+        # Instalar yq v4
         sudo curl -sSL \
           https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
           -o /usr/local/bin/yq && sudo chmod +x /usr/local/bin/yq
 
+        # Actualizar image: y anotar el build
         yq -i '
           (select(.kind=="Deployment" and .metadata.name=="pagina-web")
-            .spec.template.spec.containers[] | select(.name=="pagina-web").image) = "ignaciosa/front:latest" |
+            .spec.template.spec.containers[] | select(.name=="pagina-web").image)
+              = strenv(FRONT_REF) |
+          (select(.kind=="Deployment" and .metadata.name=="pagina-web")
+            .spec.template.metadata.annotations //= {})["dev-build-at"]
+              = strenv(BUILD_TS) |
+
           (select(.kind=="Deployment" and .metadata.name=="backend")
-            .spec.template.spec.containers[] | select(.name=="backend").image)    = "ignaciosa/back:latest"
+            .spec.template.spec.containers[] | select(.name=="backend").image)
+              = strenv(BACK_REF) |
+          (select(.kind=="Deployment" and .metadata.name=="backend")
+            .spec.template.metadata.annotations //= {})["dev-build-at"]
+              = strenv(BUILD_TS)
         ' patch-images.yaml
 
-    # 7) Commit & push SOLO si hubo cambios reales
+    ############################################################
+    # 5) Commit & push (siempre habrá diff por la anotación)
+    ############################################################
     - name: Commit & push manifests
       run: |
-        cd manifests
+        cd manifests/ManifiestosEGI
         git config user.name  "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-
-        if ! git diff --quiet; then
-          git add ManifiestosEGI/overlays/dev/patch-images.yaml
-          git commit -m "ci(dev): update images to tag latest"
-          git push origin main        # ajusta la rama si es distinta
-        else
-          echo "Sin cambios en patch-images.yaml — nada que commitear."
-        fi
+        git add overlays/dev/patch-images.yaml
+        git commit -m "ci(dev): build $BUILD_TS – tag ${TAG}"
+        git push origin main           # ajusta si tu rama es distinta
