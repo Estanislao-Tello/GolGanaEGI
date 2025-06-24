@@ -36,8 +36,8 @@ jobs:
       id: build_front
       uses: docker/build-push-action@v5                         # ﻿:contentReference[oaicite:1]{index=1}
       with:
-        context: ./frontend
-        file: ./frontend/Dockerfile
+        context: ./appdemo/frontend
+        file: ./appdemo/frontend/Dockerfile
         push: true
         tags: ${{ env.IMAGE_FRONT }}:latest
 
@@ -46,8 +46,8 @@ jobs:
       id: build_back
       uses: docker/build-push-action@v5
       with:
-        context: ./backend
-        file: ./backend/Dockerfile
+        context: ./appdemo/backend
+        file: ./appdemo/backend/Dockerfile
         push: true
         tags: ${{ env.IMAGE_BACK }}:latest
 
