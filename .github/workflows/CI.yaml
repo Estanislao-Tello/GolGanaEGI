@@ -68,7 +68,7 @@ jobs:
     # 7) Actualizar overlays/dev/patch-images.yaml
     - name: Bump patch-images.yaml
       run: |
-        cd manifests/overlays/dev              # <-- ruta correcta
+        cd manifests/ManifiestosEGI/overlays/dev              # <-- ruta correcta
     
         # instalar yq (ligero)
         sudo curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
@@ -89,7 +89,7 @@ jobs:
         git config user.name  "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         if ! git diff --quiet; then
-          git add overlays/dev/patch-images.yaml
+          git add ManifiestosEGI/overlays/dev/patch-images.yaml
           git commit -m "ci(dev): update digests for tag latest"
           git push origin main                      # o la rama que uses
         else
