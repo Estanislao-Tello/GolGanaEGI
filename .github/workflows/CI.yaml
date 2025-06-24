@@ -68,7 +68,7 @@ jobs:
     # 7) Actualizar overlays/dev/patch-images.yaml
     - name: Bump patch-images.yaml
       run: |
-        cd manifests/overlays/dev
+        cd ManifiestosEGI/overlays/dev
 
         # instalar yq (ligero)
         sudo curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
@@ -85,7 +85,7 @@ jobs:
     # 8) Commit & push SOLO si hubo cambios reales
     - name: Commit & push manifests
       run: |
-        cd manifests
+        cd ManifiestosEGI
         git config user.name  "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         if ! git diff --quiet; then
