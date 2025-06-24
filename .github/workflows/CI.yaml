@@ -1,66 +1,97 @@
-name: Build & Publish 🐳
+name: Build 🐳 · Push · Patch Manifests
 
 on:
   push:
-    branches: [main]
+    branches: [dev]
+
+env:
+  DOCKER_USER: ${{ secrets.CR_USER }}                    # usuario de Docker Hub
+  REGISTRY: docker.io
+  IMAGE_FRONT: ${{ secrets.CR_USER }}/front
+  IMAGE_BACK:  ${{ secrets.CR_USER }}/back
 
 jobs:
-  docker:
+  build-push-patch:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    # 1) Checkout del repo de código (este mismo)
+    - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+    # 2) Builder + login a Docker Hub
+    - name: Set up Buildx
+      uses: docker/setup-buildx-action@v3                       # ﻿:contentReference[oaicite:0]{index=0}
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.CR_USER }}
-          password: ${{ secrets.CR_PAT }}
+    - name: Login Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ env.DOCKER_USER }}
+        password: ${{ secrets.CR_PAT }}
 
-      - name: Build and push frontend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./appdemo/frontend
-          file: ./appdemo/frontend/Dockerfile
-          push: true
-          tags: ignaciosa/front:${{ github.sha }}
+    # 3) Build & push FRONTEND  —► tag *dev* (se sobreescribe en cada push)
+    - name: Build & push frontend
+      id: build_front
+      uses: docker/build-push-action@v5                         # ﻿:contentReference[oaicite:1]{index=1}
+      with:
+        context: ./frontend
+        file: ./frontend/Dockerfile
+        push: true
+        tags: ${{ env.IMAGE_FRONT }}:latest
 
-      - name: Build and push backend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./appdemo/backend
-          file: ./appdemo/backend/Dockerfile
-          push: true
-          tags: ignaciosa/back:${{ github.sha }}
+    # 4) Build & push BACKEND
+    - name: Build & push backend
+      id: build_back
+      uses: docker/build-push-action@v5
+      with:
+        context: ./backend
+        file: ./backend/Dockerfile
+        push: true
+        tags: ${{ env.IMAGE_BACK }}:latest
 
-      # 🧬 Actualiza los manifiestos con los nuevos tags
-      - name: Checkout manifests repo
-        uses: actions/checkout@v4
-        with:
-          repository: IgnacioSaAn/manifiestosFinal
-          token: ${{ secrets.GIT_PAT }}
-          path: manifests
-          ref: dev
+    # 5) Exportar los digests como variables de entorno
+    - name: Export image digests
+      run: |
+        echo "DIGEST_FRONT=${{ steps.build_front.outputs.digest }}" >> $GITHUB_ENV
+        echo "DIGEST_BACK=${{ steps.build_back.outputs.digest }}"  >> $GITHUB_ENV
 
-      - name: Update image tags in manifests
-        run: |
-          cd manifests
-          git switch dev
+    # 6) Clonar el repo de manifiestos
+    - name: Checkout manifests repo
+      uses: actions/checkout@v4
+      with:
+        repository: Estanislao-Tello/ManifiestosEGI              # repo destino
+        token: ${{ secrets.GIT_PAT }}                      # PAT con permiso de push
+        path: manifests
 
-          # Actualiza imagen de frontend
-          yq e -i '.spec.template.spec.containers[0].image = "ignaciosa/front:${{ github.sha }}"' deployment.yaml
+    # 7) Actualizar overlays/dev/patch-images.yaml
+    - name: Bump patch-images.yaml
+      run: |
+        cd manifests/overlays/dev
 
-          # Actualiza imagen de backend
-          yq e -i '.spec.template.spec.containers[0].image = "ignaciosa/back:${{ github.sha }}"' deployment_back.yaml
+        # instalar yq (ligero)
+        sudo curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
+        sudo chmod +x /usr/local/bin/yq
 
-          git config user.email "ci-bot@users.noreply.github.com"
-          git config user.name  "ci-bot"
-          git commit -am "ci: update front/back image tags to ${{ github.sha }}"
-          git push origin dev
+        # fijar tag 'latest' y el nuevo digest en cada imagen
+        yq -i '
+          (.images[] | select(.name=="front")).newTag = "latest"       |
+          (.images[] | select(.name=="front")).newDigest = env.DIGEST_FRONT |
+          (.images[] | select(.name=="back")).newTag  = "latest"       |
+          (.images[] | select(.name=="back")).newDigest = env.DIGEST_BACK
+        ' patch-images.yaml
+
+    # 8) Commit & push SOLO si hubo cambios reales
+    - name: Commit & push manifests
+      run: |
+        cd manifests
+        git config user.name  "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        if ! git diff --quiet; then
+          git add overlays/dev/patch-images.yaml
+          git commit -m "ci(dev): update digests for tag dev"
+          git push origin main            # o la rama que uses
+        else
+          echo "Sin cambios en patch-images.yaml — nada que commitear."
+        fi
