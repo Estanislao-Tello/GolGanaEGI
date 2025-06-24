@@ -67,19 +67,28 @@ jobs:
 
     # 7) Actualizar overlays/dev/patch-images.yaml
     - name: Bump patch-images.yaml
+      env:
+        FRONT_REF: "${{ env.IMAGE_FRONT }}@${{ env.DIGEST_FRONT }}"
+        BACK_REF:  "${{ env.IMAGE_BACK }}@${{ env.DIGEST_BACK }}"
       run: |
         cd manifests/ManifiestosEGI/overlays/dev
     
-        sudo curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
-          -o /usr/local/bin/yq
-        sudo chmod +x /usr/local/bin/yq
+        # Instalar yq v4
+        sudo curl -sSL \
+          https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+          -o /usr/local/bin/yq && sudo chmod +x /usr/local/bin/yq
     
+        # ⚙️  Sobrescribir la línea "image:" en cada Deployment
         yq -i '
-          (.images[] | select(.name=="front")).newTag    = "latest" |
-          (.images[] | select(.name=="front")).newDigest = strenv(DIGEST_FRONT) |
-          (.images[] | select(.name=="back")).newTag     = "latest" |
-          (.images[] | select(.name=="back")).newDigest  = strenv(DIGEST_BACK)
+          select(.kind=="Deployment" and .metadata.name=="pagina-web")
+            .spec.template.spec.containers[]
+            | select(.name=="pagina-web").image = env.FRONT_REF |
+    
+          select(.kind=="Deployment" and .metadata.name=="backend")
+            .spec.template.spec.containers[]
+            | select(.name=="backend").image = env.BACK_REF
         ' patch-images.yaml
+
 
     
     # 8) Commit & push SOLO si hubo cambios reales
