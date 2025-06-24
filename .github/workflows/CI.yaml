@@ -2,48 +2,45 @@ name: Build 🐳 · Push · Patch Manifests
 
 on:
   push:
-    branches: [dev]
+    branches: [dev]          # rama del código que dispara el pipeline
 
 env:
-  DOCKER_USER: ${{ secrets.CR_USER }}                    # usuario de Docker Hub
   REGISTRY: docker.io
-  IMAGE_FRONT: ${{ secrets.CR_USER }}/front
-  IMAGE_BACK:  ${{ secrets.CR_USER }}/back
+  IMAGE_FRONT: ignaciosa/front
+  IMAGE_BACK:  ignaciosa/back
 
 jobs:
   build-push-patch:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
+      contents: read          # para clonar y hacer commit
+      packages: write         # para publicar imágenes en Docker Hub
 
     steps:
-    # 1) Checkout del repo de código (este mismo)
+    # 1) Checkout del código fuente
     - uses: actions/checkout@v4
 
     # 2) Builder + login a Docker Hub
     - name: Set up Buildx
-      uses: docker/setup-buildx-action@v3                       # ﻿:contentReference[oaicite:0]{index=0}
+      uses: docker/setup-buildx-action@v3
 
-    - name: Login Docker Hub
+    - name: Login to Docker Hub
       uses: docker/login-action@v3
       with:
         username: ${{ secrets.CR_USER }}
         password: ${{ secrets.CR_PAT }}
 
-    # 3) Build & push FRONTEND  —► tag *dev* (se sobreescribe en cada push)
+    # 3) Build & push FRONTEND  —► tag :latest
     - name: Build & push frontend
-      id: build_front
-      uses: docker/build-push-action@v5                         # ﻿:contentReference[oaicite:1]{index=1}
+      uses: docker/build-push-action@v5
       with:
         context: ./appdemo/frontend
         file: ./appdemo/frontend/Dockerfile
         push: true
         tags: ${{ env.IMAGE_FRONT }}:latest
 
-    # 4) Build & push BACKEND
+    # 4) Build & push BACKEND  —► tag :latest
     - name: Build & push backend
-      id: build_back
       uses: docker/build-push-action@v5
       with:
         context: ./appdemo/backend
@@ -51,54 +48,43 @@ jobs:
         push: true
         tags: ${{ env.IMAGE_BACK }}:latest
 
-    # 5) Exportar los digests como variables de entorno
-    - name: Export image digests
-      run: |
-        echo "DIGEST_FRONT=${{ steps.build_front.outputs.digest }}" >> $GITHUB_ENV
-        echo "DIGEST_BACK=${{ steps.build_back.outputs.digest }}"  >> $GITHUB_ENV
-
-    # 6) Clonar el repo de manifiestos
+    # 5) Clonar el repo de manifiestos
     - name: Checkout manifests repo
       uses: actions/checkout@v4
       with:
-        repository: Estanislao-Tello/ManifiestosEGI              # repo destino
-        token: ${{ secrets.GIT_PAT }}                      # PAT con permiso de push
-        path: manifests
+        repository: Estanislao-Tello/ManifiestosEGI   # ⚠ ajusta si cambia
+        token: ${{ secrets.GIT_PAT }}                 # PAT con permiso de push
+        path: manifests                               # carpeta de destino
+        ref: main                                     # rama de manifiestos
 
-    # 7) Actualizar overlays/dev/patch-images.yaml
-    - name: Bump patch-images.yaml
-      env:
-        FRONT_REF: "${{ env.IMAGE_FRONT }}@${{ env.DIGEST_FRONT }}"
-        BACK_REF:  "${{ env.IMAGE_BACK }}@${{ env.DIGEST_BACK }}"
+    # 6) Parchear patch-images.yaml con tag :latest
+    - name: Update image tags in patch-images.yaml
       run: |
         cd manifests/ManifiestosEGI/overlays/dev
-    
-        # Instalar yq v4
-        sudo curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+
+        # Instalar yq (binario estático)
+        sudo curl -sSL \
+          https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
           -o /usr/local/bin/yq && sudo chmod +x /usr/local/bin/yq
-    
-        # Actualizar la clave image de cada Deployment
+
         yq -i '
           (select(.kind=="Deployment" and .metadata.name=="pagina-web")
-            .spec.template.spec.containers[] | select(.name=="pagina-web").image) = strenv(FRONT_REF) |
+            .spec.template.spec.containers[] | select(.name=="pagina-web").image) = "ignaciosa/front:latest" |
           (select(.kind=="Deployment" and .metadata.name=="backend")
-            .spec.template.spec.containers[] | select(.name=="backend").image)    = strenv(BACK_REF)
+            .spec.template.spec.containers[] | select(.name=="backend").image)    = "ignaciosa/back:latest"
         ' patch-images.yaml
 
-
-
-    
-    # 8) Commit & push SOLO si hubo cambios reales
+    # 7) Commit & push SOLO si hubo cambios reales
     - name: Commit & push manifests
       run: |
-        cd manifests                                # <-- de nuevo, la misma carpeta
+        cd manifests
         git config user.name  "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
+
         if ! git diff --quiet; then
           git add ManifiestosEGI/overlays/dev/patch-images.yaml
-          git commit -m "ci(dev): update digests for tag latest"
-          git push origin main                      # o la rama que uses
+          git commit -m "ci(dev): update images to tag latest"
+          git push origin main        # ajusta la rama si es distinta
         else
           echo "Sin cambios en patch-images.yaml — nada que commitear."
         fi
-
