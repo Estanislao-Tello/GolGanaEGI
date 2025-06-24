@@ -1,39 +1,45 @@
+# .github/workflows/ci-dev.yml
+# ------------------------------------------------------------
+# Compila y publica las imágenes :latest de frontend + backend,
+# actualiza el overlay DEV en ManifiestosEGI y añade una
+# anotación “dev-build-at” con un identificador único para
+# forzar el rollout en Argo CD cada vez que se hace push a dev.
+# ------------------------------------------------------------
+
 name: Build 🐳 · Push · Patch DEV Manifests
 
 on:
   push:
-    branches: [ dev ]
+    branches: [ dev ]            # ← se ejecuta en cada push a dev
 
 env:
   IMAGE_FRONT: ignaciosa/front
   IMAGE_BACK:  ignaciosa/back
-  TAG: latest
-
+  TAG: latest                    # tag móvil que se sobreescribe
   MANIFESTS_REPO: Estanislao-Tello/ManifiestosEGI
-  OVERLAY_DEV: manifests/ManifiestosEGI/overlays/dev/patch-images.yaml
 
 jobs:
   build-push-patch:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
+      contents: read             # leer este repo y commitear en el otro
+      packages: write            # publicar imágenes en Docker Hub
 
     steps:
-    # 1) Código fuente
+    # 1) Checkout del código fuente (repo GolGanaEGI)
     - uses: actions/checkout@v4
 
     # 2) Build & push imágenes :latest
-    - name: Set up Buildx
+    - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Login Docker Hub
+    - name: Docker Hub login
       uses: docker/login-action@v3
       with:
         username: ${{ secrets.CR_USER }}
         password: ${{ secrets.CR_PAT }}
 
-    - name: Build & push frontend
+    - name: Build & push frontend (:latest)
       uses: docker/build-push-action@v5
       with:
         context: ./appdemo/frontend
@@ -41,7 +47,7 @@ jobs:
         push:   true
         tags:   ${{ env.IMAGE_FRONT }}:${{ env.TAG }}
 
-    - name: Build & push backend
+    - name: Build & push backend (:latest)
       uses: docker/build-push-action@v5
       with:
         context: ./appdemo/backend
@@ -49,14 +55,14 @@ jobs:
         push:   true
         tags:   ${{ env.IMAGE_BACK }}:${{ env.TAG }}
 
-    # 3) Checkout manifiestos
+    # 3) Checkout del repo de manifiestos
     - name: Checkout manifests repo
       uses: actions/checkout@v4
       with:
         repository: ${{ env.MANIFESTS_REPO }}
-        token:      ${{ secrets.GIT_PAT }}
+        token:      ${{ secrets.GIT_PAT }}   # PAT con permiso de push
         path:       manifests
-        ref:        main               # ajusta si usas otra rama
+        ref:        main                    # ajusta si usas otra rama
 
     # 4) Parchear overlay DEV
     - name: Patch images & add build-id
@@ -64,12 +70,12 @@ jobs:
       env:
         FRONT_REF: "${{ env.IMAGE_FRONT }}:${{ env.TAG }}"
         BACK_REF:  "${{ env.IMAGE_BACK }}:${{ env.TAG }}"
-        BUILD_TS:  "${{ github.run_id }}-${{ github.run_attempt }}"
+        BUILD_TS:  "${{ github.run_id }}-${{ github.run_attempt }}"  # id único
       run: |
         sudo curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
              -o /usr/local/bin/yq && sudo chmod +x /usr/local/bin/yq
 
-        # ── Actualizar imagen y anotar build ────────────────────────────────
+        # ── Actualizar imágenes y anotación ─────────────────────────
         yq -i '
           # FRONTEND
           (select(.kind=="Deployment" and .metadata.name=="pagina-web")
@@ -88,7 +94,7 @@ jobs:
               = strenv(BUILD_TS)
         ' patch-images.yaml
 
-    # 5) Commit & push (siempre hay diff por la anotación)
+    # 5) Commit & push (siempre hay diff gracias a la anotación)
     - name: Commit & push manifests
       run: |
         cd manifests/ManifiestosEGI
@@ -96,4 +102,4 @@ jobs:
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add overlays/dev/patch-images.yaml
         git commit -m "ci(dev): build $BUILD_TS – tag $TAG"
-        git push origin main       # usa la rama que tengas en el repo de manifiestos
+        git push origin main               # ajusta la rama si es distinta
