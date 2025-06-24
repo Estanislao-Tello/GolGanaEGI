@@ -68,30 +68,31 @@ jobs:
     # 7) Actualizar overlays/dev/patch-images.yaml
     - name: Bump patch-images.yaml
       run: |
-        cd ManifiestosEGI/overlays/dev
-
+        cd manifests/overlays/dev              # <-- ruta correcta
+    
         # instalar yq (ligero)
         sudo curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
         sudo chmod +x /usr/local/bin/yq
-
+    
         # fijar tag 'latest' y el nuevo digest en cada imagen
         yq -i '
-          (.images[] | select(.name=="front")).newTag = "latest"       |
+          (.images[] | select(.name=="front")).newTag    = "latest" |
           (.images[] | select(.name=="front")).newDigest = env.DIGEST_FRONT |
-          (.images[] | select(.name=="back")).newTag  = "latest"       |
-          (.images[] | select(.name=="back")).newDigest = env.DIGEST_BACK
+          (.images[] | select(.name=="back")).newTag     = "latest" |
+          (.images[] | select(.name=="back")).newDigest  = env.DIGEST_BACK
         ' patch-images.yaml
-
+    
     # 8) Commit & push SOLO si hubo cambios reales
     - name: Commit & push manifests
       run: |
-        cd ManifiestosEGI
+        cd manifests                                # <-- de nuevo, la misma carpeta
         git config user.name  "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         if ! git diff --quiet; then
           git add overlays/dev/patch-images.yaml
-          git commit -m "ci(dev): update digests for tag dev"
-          git push origin main            # o la rama que uses
+          git commit -m "ci(dev): update digests for tag latest"
+          git push origin main                      # o la rama que uses
         else
           echo "Sin cambios en patch-images.yaml — nada que commitear."
         fi
+
