@@ -68,19 +68,19 @@ jobs:
     # 7) Actualizar overlays/dev/patch-images.yaml
     - name: Bump patch-images.yaml
       run: |
-        cd manifests/ManifiestosEGI/overlays/dev              # <-- ruta correcta
+        cd manifests/ManifiestosEGI/overlays/dev
     
-        # instalar yq (ligero)
-        sudo curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
+        sudo curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+          -o /usr/local/bin/yq
         sudo chmod +x /usr/local/bin/yq
     
-        # fijar tag 'latest' y el nuevo digest en cada imagen
         yq -i '
           (.images[] | select(.name=="front")).newTag    = "latest" |
-          (.images[] | select(.name=="front")).newDigest = env.DIGEST_FRONT |
+          (.images[] | select(.name=="front")).newDigest = strenv(DIGEST_FRONT) |
           (.images[] | select(.name=="back")).newTag     = "latest" |
-          (.images[] | select(.name=="back")).newDigest  = env.DIGEST_BACK
+          (.images[] | select(.name=="back")).newDigest  = strenv(DIGEST_BACK)
         ' patch-images.yaml
+
     
     # 8) Commit & push SOLO si hubo cambios reales
     - name: Commit & push manifests
