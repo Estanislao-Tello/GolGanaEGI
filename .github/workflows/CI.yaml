@@ -74,20 +74,17 @@ jobs:
         cd manifests/ManifiestosEGI/overlays/dev
     
         # Instalar yq v4
-        sudo curl -sSL \
-          https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+        sudo curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
           -o /usr/local/bin/yq && sudo chmod +x /usr/local/bin/yq
     
-        # ⚙️  Sobrescribir la línea "image:" en cada Deployment
+        # Actualizar la clave image de cada Deployment
         yq -i '
-          select(.kind=="Deployment" and .metadata.name=="pagina-web")
-            .spec.template.spec.containers[]
-            | select(.name=="pagina-web").image = env.FRONT_REF |
-    
-          select(.kind=="Deployment" and .metadata.name=="backend")
-            .spec.template.spec.containers[]
-            | select(.name=="backend").image = env.BACK_REF
+          (select(.kind=="Deployment" and .metadata.name=="pagina-web")
+            .spec.template.spec.containers[] | select(.name=="pagina-web").image) = strenv(FRONT_REF) |
+          (select(.kind=="Deployment" and .metadata.name=="backend")
+            .spec.template.spec.containers[] | select(.name=="backend").image)    = strenv(BACK_REF)
         ' patch-images.yaml
+
 
 
     
