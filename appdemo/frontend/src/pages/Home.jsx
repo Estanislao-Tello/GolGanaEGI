@@ -8,17 +8,17 @@ const Home = () => {
       <section className="hero-section">
         <h1>Bienvenido a Golgana</h1>
         <p>
-          Tu plataforma integral para la gestión y reserva de predios agrícolas. 
-          Simplifica tus operaciones, optimiza tus recursos y maximiza tu productividad.
+          Tu plataforma integral para la gestión y reserva de canchas de fútbol. 
+          Jugate unos fulbachos, comete unos choriz y tomate unas birras.
         </p>
       </section>
 
       <section className="features-section">
         <div className="feature-card">
           <div className="feature-icon">🌱</div>
-          <h3>Gestión de Predios</h3>
+          <h3>Gestión de Canchas</h3>
           <p>
-            Administra todos tus predios agrícolas desde un solo lugar. 
+            Administra todas tus canchas desde un solo lugar. 
             Registra su ubicación, características y disponibilidad.
           </p>
         </div>
@@ -50,7 +50,7 @@ const Home = () => {
             "Golgana transformó completamente la forma en que administramos nuestros terrenos. 
             Ahora tenemos todo organizado y accesible desde cualquier dispositivo."
           </p>
-          <p className="testimonial-author">- Carlos Mendoza, Agricultor</p>
+          <p className="testimonial-author">- Pablo Vargas, Crack Total</p>
         </div>
         
         <div className="testimonial-card">
@@ -58,7 +58,7 @@ const Home = () => {
             "La facilidad para crear reservas y ver la disponibilidad en tiempo real 
             ha hecho que nuestros procesos sean mucho más eficientes."
           </p>
-          <p className="testimonial-author">- María González, Administradora</p>
+          <p className="testimonial-author">- Daniel Zalazar, otro Crack Total</p>
         </div>
       </section>
 
