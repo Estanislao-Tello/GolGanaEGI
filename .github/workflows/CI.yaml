@@ -1,16 +1,15 @@
 # .github/workflows/ci-dev.yml
 # ------------------------------------------------------------
-# Compila y publica las imágenes :latest de frontend + backend,
+# Compila y publica las imágenes :latest (frontend + backend),
 # actualiza el overlay DEV en ManifiestosEGI y añade una
-# anotación “dev-build-at” con un identificador único para
-# forzar el rollout en Argo CD cada vez que se hace push a dev.
+# anotación “dev-build-at” para forzar el rollout en Argo CD
 # ------------------------------------------------------------
 
 name: Build 🐳 · Push · Patch DEV Manifests
 
 on:
   push:
-    branches: [ dev ]            # ← se ejecuta en cada push a dev
+    branches: [ dev ]            # se ejecuta en cada push a dev
 
 env:
   IMAGE_FRONT: ignaciosa/front
@@ -27,7 +26,8 @@ jobs:
 
     steps:
     # 1) Checkout del código fuente (repo GolGanaEGI)
-    - uses: actions/checkout@v4
+    - name: Checkout source
+      uses: actions/checkout@v4
 
     # 2) Build & push imágenes :latest
     - name: Set up Docker Buildx
@@ -65,41 +65,49 @@ jobs:
         ref:        main                    # ajusta si usas otra rama
 
     # 4) Parchear overlay DEV
-    - name: Patch images & add build-id
+    - name: Patch images & annotate build-id
       working-directory: manifests/ManifiestosEGI/overlays/dev
       env:
         FRONT_REF: "${{ env.IMAGE_FRONT }}:${{ env.TAG }}"
         BACK_REF:  "${{ env.IMAGE_BACK }}:${{ env.TAG }}"
-        BUILD_TS:  "${{ github.run_id }}-${{ github.run_attempt }}"  # id único
+        BUILD_TS:  "${{ github.run_id }}-${{ github.run_attempt }}"
       run: |
-        sudo curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
-             -o /usr/local/bin/yq && sudo chmod +x /usr/local/bin/yq
+        # Instalamos yq v4
+        sudo curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
+        sudo chmod +x /usr/local/bin/yq
 
-        # ── Actualizar imágenes y anotación ─────────────────────────
+        # ---- FRONTEND ----
         yq -i '
-          # FRONTEND
-          (select(.kind=="Deployment" and .metadata.name=="pagina-web")
-            .spec.template.spec.containers[]
-            | select(.name=="pagina-web").image) |= strenv(FRONT_REF) |
-          (select(.kind=="Deployment" and .metadata.name=="pagina-web")
-            .spec.template.metadata.annotations //= {})["dev-build-at"]
-              = strenv(BUILD_TS) |
+          select(.kind == "Deployment" and .metadata.name == "pagina-web")
+          | .spec.template.spec.containers[]
+          | select(.name == "pagina-web")
+          | .image = strenv(FRONT_REF)
+        ' patch-images.yaml
 
-          # BACKEND
-          (select(.kind=="Deployment" and .metadata.name=="backend")
-            .spec.template.spec.containers[]
-            | select(.name=="backend").image)    |= strenv(BACK_REF) |
-          (select(.kind=="Deployment" and .metadata.name=="backend")
-            .spec.template.metadata.annotations //= {})["dev-build-at"]
-              = strenv(BUILD_TS)
+        yq -i '
+          select(.kind == "Deployment" and .metadata.name == "pagina-web")
+          | (.spec.template.metadata.annotations // {})["dev-build-at"] = strenv(BUILD_TS)
+        ' patch-images.yaml
+
+        # ---- BACKEND ----
+        yq -i '
+          select(.kind == "Deployment" and .metadata.name == "backend")
+          | .spec.template.spec.containers[]
+          | select(.name == "backend")
+          | .image = strenv(BACK_REF)
+        ' patch-images.yaml
+
+        yq -i '
+          select(.kind == "Deployment" and .metadata.name == "backend")
+          | (.spec.template.metadata.annotations // {})["dev-build-at"] = strenv(BUILD_TS)
         ' patch-images.yaml
 
     # 5) Commit & push (siempre hay diff gracias a la anotación)
     - name: Commit & push manifests
+      working-directory: manifests/ManifiestosEGI
       run: |
-        cd manifests/ManifiestosEGI
         git config user.name  "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add overlays/dev/patch-images.yaml
-        git commit -m "ci(dev): build $BUILD_TS – tag $TAG"
-        git push origin main               # ajusta la rama si es distinta
+        git commit -m "ci(dev): build ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} – tag ${TAG}"
+        git push origin main
