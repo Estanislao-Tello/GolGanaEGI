@@ -2,17 +2,12 @@
 # -------------------------------------------------------------------
 # Build 🐳 · Push · Patch DEV Manifests
 # -------------------------------------------------------------------
-# • Compila y publica las imágenes :latest (frontend + backend)
-# • Parchea el overlay DEV de ManifiestosEGI modificando:
-#     - .image    -> ignaciosa/{front,back}:latest
-#     - dev-build-at -> runId-runAttempt  (fuerza rollout en Argo CD)
-# -------------------------------------------------------------------
 
 name: Build 🐳 · Push · Patch DEV Manifests
 
 on:
   push:
-    branches: [ dev ]          # se ejecuta en cada push a dev
+    branches: [ dev ]
 
 env:
   IMAGE_FRONT: ignaciosa/front
@@ -24,11 +19,11 @@ jobs:
   build-push-patch:
     runs-on: ubuntu-latest
     permissions:
-      contents: read           # leer este repo y commitear en el otro
-      packages: write          # publicar imágenes en Docker Hub
+      contents: read
+      packages: write
 
     steps:
-    # 1) Checkout del código fuente (repo GolGanaEGI)
+    # 1) Código fuente
     - name: Checkout source
       uses: actions/checkout@v4
 
@@ -58,16 +53,16 @@ jobs:
         push:   true
         tags:   ${{ env.IMAGE_BACK }}:${{ env.TAG }}
 
-    # 3) Checkout del repo de manifiestos
+    # 3) Repo de manifiestos
     - name: Checkout manifests repo
       uses: actions/checkout@v4
       with:
         repository: ${{ env.MANIFESTS_REPO }}
-        token:      ${{ secrets.GIT_PAT }}   # PAT con permiso de push
+        token:      ${{ secrets.GIT_PAT }}
         path:       manifests
-        ref:        main                    # ajusta si usas otra rama
+        ref:        main
 
-    # 4) Parchear overlay DEV (sin vaciar el YAML)
+    # 4) Parchear overlay DEV
     - name: Patch images & annotate build-id
       working-directory: manifests/ManifiestosEGI/overlays/dev
       env:
@@ -75,29 +70,26 @@ jobs:
         BACK_REF:  "${{ env.IMAGE_BACK }}:${{ env.TAG }}"
         BUILD_TS:  "${{ github.run_id }}-${{ github.run_attempt }}"
       run: |
-        # Instalamos yq v4
+        # Instalar yq v4
         sudo curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
         sudo chmod +x /usr/local/bin/yq
 
-        # ─── Parcheo seguro (preserva docs no matcheados) ──────────
+        # Parcheo seguro: devuelve SIEMPRE cada documento completo
         yq -i '
-          # Para cada documento…
-          if (.kind == "Deployment") then
+          if .kind == "Deployment" then
             if .metadata.name == "pagina-web" then
               (.spec.template.spec.containers[] | select(.name == "pagina-web").image) = strenv(FRONT_REF) |
-              (.spec.template.metadata.annotations // {} )["dev-build-at"] = strenv(BUILD_TS)
+              (.spec.template.metadata.annotations // {})["dev-build-at"] = strenv(BUILD_TS)
             elif .metadata.name == "backend" then
               (.spec.template.spec.containers[] | select(.name == "backend").image) = strenv(BACK_REF) |
-              (.spec.template.metadata.annotations // {} )["dev-build-at"] = strenv(BUILD_TS)
-            else
-              .
+              (.spec.template.metadata.annotations // {})["dev-build-at"] = strenv(BUILD_TS)
+            else .
             end
-          else
-            .
+          else .
           end
         ' patch-images.yaml
 
-    # 5) Commit & push (siempre hay diff gracias a la anotación)
+    # 5) Commit & push manifiestos
     - name: Commit & push manifests
       working-directory: manifests/ManifiestosEGI
       run: |
