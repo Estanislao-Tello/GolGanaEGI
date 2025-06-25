@@ -77,7 +77,7 @@ const Home = () => {
           <div className="faq-question">¿Puedo gestionar múltiples predios desde una sola cuenta?</div>
           <p className="faq-answer">
             ¡Absolutamente! Golgana está diseñado para administrar múltiples predios 
-            desde una sola interfaz, facilitando la gestión completa de tus propiedades agrícolas.
+            desde una sola interfaz, facilitando la gestión completa de tus propiedades agrícolas como que agricolas ajajaj.
           </p>
         </div>
         
