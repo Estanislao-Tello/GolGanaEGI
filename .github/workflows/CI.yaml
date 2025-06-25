@@ -52,7 +52,7 @@ jobs:
     - name: Build and push frontend image
       uses: docker/build-push-action@v5
       with:
-        context: ./frontend               # ↙ cámbialo si tu Dockerfile está en otra ruta
+        context: .GolGanaEgi/appdemo/frontend               # ↙ cámbialo si tu Dockerfile está en otra ruta
         push: true
         tags: |
           ${{ env.IMAGE_FRONT }}:${{ steps.meta.outputs.tag }}
@@ -61,7 +61,7 @@ jobs:
     - name: Build and push backend image
       uses: docker/build-push-action@v5
       with:
-        context: ./backend             # ↙ cámbialo si tu Dockerfile está en otra ruta
+        context: .GolGanaEgi/appdemo/backend             # ↙ cámbialo si tu Dockerfile está en otra ruta
         push: true
         tags: |
           ${{ env.IMAGE_BACK }}:${{ steps.meta.outputs.tag }}
