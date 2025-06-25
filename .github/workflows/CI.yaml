@@ -1,11 +1,11 @@
 # .github/workflows/ci-dev.yml
 # -------------------------------------------------------------------
 # Build 🐳 · Push · Patch DEV Manifests
-#   • Publica imágenes :latest (front + back)
-#   • Parchea overlay DEV → actualiza imagen + 2 anotaciones:
-#       - dev-build-at   : timestamp único (para Argo CD)
-#       - image-patch-id : mismo timestamp, fuerza diff del archivo
-#   • Solo hace commit/push si realmente hubo cambios
+#   • Publica imágenes :latest
+#   • Parchea overlay DEV → actualiza:
+#       - image
+#       - annotations.build-id  (valor único por commit)
+#   • Solo hace commit si el patch realmente cambió
 # -------------------------------------------------------------------
 
 name: Build 🐳 · Push · Patch DEV Manifests
@@ -65,51 +65,43 @@ jobs:
         repository: ${{ env.MANIFESTS_REPO }}
         token:      ${{ secrets.GIT_PAT }}
         path:       manifests
-        ref:        main         # ajusta si tu rama es otra
+        ref:        main      # ajusta si usas otra rama
 
     # 4) Parchear overlay DEV
-    - name: Patch images & annotate build-id
+    - name: Patch images & add build-id annotation
       working-directory: manifests/ManifiestosEGI/overlays/dev
       env:
         FRONT_REF: "${{ env.IMAGE_FRONT }}:${{ env.TAG }}"
         BACK_REF : "${{ env.IMAGE_BACK }}:${{ env.TAG }}"
-        BUILD_TS : "${{ github.run_id }}-${{ github.run_attempt }}"
+        BUILD_ID : "${{ github.run_id }}-${{ github.run_attempt }}"
       run: |
-        # Instalar yq v4 (última estable)
+        # Instalar yq v4
         curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
           -o yq && chmod +x yq && sudo mv yq /usr/local/bin/
 
-        ############  IMÁGENES  ############
-        # Front
+        ############  DEPLOYMENT pagina-web  ############
         yq eval -i '
-          (select(.kind == "Deployment" and .metadata.name == "pagina-web")
-            .spec.template.spec.containers[]
-            | select(.name == "pagina-web").image) = strenv(FRONT_REF)
+          select(.kind == "Deployment" and .metadata.name == "pagina-web") as $d
+          | ($d.spec.template.spec.containers[] | select(.name == "pagina-web").image) = strenv(FRONT_REF)
         ' patch-images.yaml
 
-        # Back
         yq eval -i '
-          (select(.kind == "Deployment" and .metadata.name == "backend")
-            .spec.template.spec.containers[]
-            | select(.name == "backend").image) = strenv(BACK_REF)
+          select(.kind == "Deployment" and .metadata.name == "pagina-web")
+          | (.spec.template.metadata.annotations // {})["build-id"] = strenv(BUILD_ID)
         ' patch-images.yaml
 
-        ############  ANOTACIONES  ############
-        # Front
+        ############  DEPLOYMENT backend  ############
         yq eval -i '
-          (select(.kind == "Deployment" and .metadata.name == "pagina-web")
-            .spec.template.metadata.annotations // {})
-            |= . + {"dev-build-at": strenv(BUILD_TS), "image-patch-id": strenv(BUILD_TS)}
+          select(.kind == "Deployment" and .metadata.name == "backend") as $d
+          | ($d.spec.template.spec.containers[] | select(.name == "backend").image) = strenv(BACK_REF)
         ' patch-images.yaml
 
-        # Back
         yq eval -i '
-          (select(.kind == "Deployment" and .metadata.name == "backend")
-            .spec.template.metadata.annotations // {})
-            |= . + {"dev-build-at": strenv(BUILD_TS), "image-patch-id": strenv(BUILD_TS)}
+          select(.kind == "Deployment" and .metadata.name == "backend")
+          | (.spec.template.metadata.annotations // {})["build-id"] = strenv(BUILD_ID)
         ' patch-images.yaml
 
-    # 5) Commit & push manifiestos (solo si hay cambios)
+    # 5) Commit & push manifiestos (solo si hay cambios reales)
     - name: Commit & push manifests
       working-directory: manifests/ManifiestosEGI
       run: |
@@ -117,7 +109,7 @@ jobs:
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add overlays/dev/patch-images.yaml
 
-        # Si no hay cambios staged, salimos sin error
+        # Evita fallo “nothing to commit”
         if git diff --cached --quiet; then
           echo "· No hay cambios — se omite commit y push"
           exit 0
