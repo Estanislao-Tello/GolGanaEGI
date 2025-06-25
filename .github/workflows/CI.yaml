@@ -1,6 +1,11 @@
 # .github/workflows/ci-dev.yml
 # -------------------------------------------------------------------
 # Build 🐳 · Push · Patch DEV Manifests
+#   • Publica imágenes :latest (front + back)
+#   • Parchea overlay DEV → actualiza imagen + 2 anotaciones:
+#       - dev-build-at   : timestamp único (para Argo CD)
+#       - image-patch-id : mismo timestamp, fuerza diff del archivo
+#   • Solo hace commit/push si realmente hubo cambios
 # -------------------------------------------------------------------
 
 name: Build 🐳 · Push · Patch DEV Manifests
@@ -11,8 +16,8 @@ on:
 
 env:
   IMAGE_FRONT: ignaciosa/front
-  IMAGE_BACK:  ignaciosa/back
-  TAG:         latest
+  IMAGE_BACK : ignaciosa/back
+  TAG        : latest
   MANIFESTS_REPO: Estanislao-Tello/ManifiestosEGI
 
 jobs:
@@ -23,7 +28,7 @@ jobs:
       packages: write
 
     steps:
-    # 1) Código fuente
+    # 1) Checkout del código fuente
     - name: Checkout source
       uses: actions/checkout@v4
 
@@ -53,22 +58,22 @@ jobs:
         push:   true
         tags:   ${{ env.IMAGE_BACK }}:${{ env.TAG }}
 
-    # 3) Repo de manifiestos
+    # 3) Checkout del repo de manifiestos
     - name: Checkout manifests repo
       uses: actions/checkout@v4
       with:
         repository: ${{ env.MANIFESTS_REPO }}
         token:      ${{ secrets.GIT_PAT }}
         path:       manifests
-        ref:        main
+        ref:        main         # ajusta si tu rama es otra
 
     # 4) Parchear overlay DEV
     - name: Patch images & annotate build-id
       working-directory: manifests/ManifiestosEGI/overlays/dev
       env:
         FRONT_REF: "${{ env.IMAGE_FRONT }}:${{ env.TAG }}"
-        BACK_REF:  "${{ env.IMAGE_BACK }}:${{ env.TAG }}"
-        BUILD_TS:  "${{ github.run_id }}-${{ github.run_attempt }}"
+        BACK_REF : "${{ env.IMAGE_BACK }}:${{ env.TAG }}"
+        BUILD_TS : "${{ github.run_id }}-${{ github.run_attempt }}"
       run: |
         # Instalar yq v4 (última estable)
         curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
@@ -82,38 +87,41 @@ jobs:
             | select(.name == "pagina-web").image) = strenv(FRONT_REF)
         ' patch-images.yaml
 
-                # Back
+        # Back
         yq eval -i '
           (select(.kind == "Deployment" and .metadata.name == "backend")
             .spec.template.spec.containers[]
             | select(.name == "backend").image) = strenv(BACK_REF)
         ' patch-images.yaml
 
-
         ############  ANOTACIONES  ############
         # Front
         yq eval -i '
           (select(.kind == "Deployment" and .metadata.name == "pagina-web")
             .spec.template.metadata.annotations // {})
-            ["dev-build-at"] = strenv(BUILD_TS)
+            |= . + {"dev-build-at": strenv(BUILD_TS), "image-patch-id": strenv(BUILD_TS)}
         ' patch-images.yaml
 
         # Back
         yq eval -i '
           (select(.kind == "Deployment" and .metadata.name == "backend")
             .spec.template.metadata.annotations // {})
-            ["dev-build-at"] = strenv(BUILD_TS)
+            |= . + {"dev-build-at": strenv(BUILD_TS), "image-patch-id": strenv(BUILD_TS)}
         ' patch-images.yaml
 
-       # 5) Commit & push manifiestos (solo si hay cambios)
+    # 5) Commit & push manifiestos (solo si hay cambios)
     - name: Commit & push manifests
       working-directory: manifests/ManifiestosEGI
       run: |
         git config user.name  "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-
-        # Añadimos el archivo que podría haber cambiado
         git add overlays/dev/patch-images.yaml
+
+        # Si no hay cambios staged, salimos sin error
+        if git diff --cached --quiet; then
+          echo "· No hay cambios — se omite commit y push"
+          exit 0
+        fi
 
         git commit -m "ci(dev): build ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} – tag ${TAG}"
         git push origin main
