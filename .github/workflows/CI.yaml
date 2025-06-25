@@ -115,10 +115,5 @@ jobs:
         # Añadimos el archivo que podría haber cambiado
         git add overlays/dev/patch-images.yaml
 
-        # ¿Hay algo que commitear?
-        if git diff --cached --quiet; then
-          echo "· No hay cambios en patch-images.yaml — se omite commit/push"
-        else
           git commit -m "ci(dev): build ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} – tag ${TAG}"
           git push origin main
-        fi
