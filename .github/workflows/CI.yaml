@@ -1,28 +1,31 @@
 # .github/workflows/ci-dev.yml
-# ------------------------------------------------------------
-# Compila y publica las imágenes :latest (frontend + backend),
-# actualiza el overlay DEV en ManifiestosEGI y añade una
-# anotación “dev-build-at” para forzar el rollout en Argo CD
-# ------------------------------------------------------------
+# -------------------------------------------------------------------
+# Build 🐳 · Push · Patch DEV Manifests
+# -------------------------------------------------------------------
+# • Compila y publica las imágenes :latest (frontend + backend)
+# • Parchea el overlay DEV de ManifiestosEGI modificando:
+#     - .image    -> ignaciosa/{front,back}:latest
+#     - dev-build-at -> runId-runAttempt  (fuerza rollout en Argo CD)
+# -------------------------------------------------------------------
 
 name: Build 🐳 · Push · Patch DEV Manifests
 
 on:
   push:
-    branches: [ dev ]            # se ejecuta en cada push a dev
+    branches: [ dev ]          # se ejecuta en cada push a dev
 
 env:
   IMAGE_FRONT: ignaciosa/front
   IMAGE_BACK:  ignaciosa/back
-  TAG: latest                    # tag móvil que se sobreescribe
+  TAG:         latest
   MANIFESTS_REPO: Estanislao-Tello/ManifiestosEGI
 
 jobs:
   build-push-patch:
     runs-on: ubuntu-latest
     permissions:
-      contents: read             # leer este repo y commitear en el otro
-      packages: write            # publicar imágenes en Docker Hub
+      contents: read           # leer este repo y commitear en el otro
+      packages: write          # publicar imágenes en Docker Hub
 
     steps:
     # 1) Checkout del código fuente (repo GolGanaEGI)
@@ -64,7 +67,7 @@ jobs:
         path:       manifests
         ref:        main                    # ajusta si usas otra rama
 
-    # 4) Parchear overlay DEV
+    # 4) Parchear overlay DEV (sin vaciar el YAML)
     - name: Patch images & annotate build-id
       working-directory: manifests/ManifiestosEGI/overlays/dev
       env:
@@ -76,30 +79,22 @@ jobs:
         sudo curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
         sudo chmod +x /usr/local/bin/yq
 
-        # ---- FRONTEND ----
+        # ─── Parcheo seguro (preserva docs no matcheados) ──────────
         yq -i '
-          select(.kind == "Deployment" and .metadata.name == "pagina-web")
-          | .spec.template.spec.containers[]
-          | select(.name == "pagina-web")
-          | .image = strenv(FRONT_REF)
-        ' patch-images.yaml
-
-        yq -i '
-          select(.kind == "Deployment" and .metadata.name == "pagina-web")
-          | (.spec.template.metadata.annotations // {})["dev-build-at"] = strenv(BUILD_TS)
-        ' patch-images.yaml
-
-        # ---- BACKEND ----
-        yq -i '
-          select(.kind == "Deployment" and .metadata.name == "backend")
-          | .spec.template.spec.containers[]
-          | select(.name == "backend")
-          | .image = strenv(BACK_REF)
-        ' patch-images.yaml
-
-        yq -i '
-          select(.kind == "Deployment" and .metadata.name == "backend")
-          | (.spec.template.metadata.annotations // {})["dev-build-at"] = strenv(BUILD_TS)
+          # Para cada documento…
+          if (.kind == "Deployment") then
+            if .metadata.name == "pagina-web" then
+              (.spec.template.spec.containers[] | select(.name == "pagina-web").image) = strenv(FRONT_REF) |
+              (.spec.template.metadata.annotations // {} )["dev-build-at"] = strenv(BUILD_TS)
+            elif .metadata.name == "backend" then
+              (.spec.template.spec.containers[] | select(.name == "backend").image) = strenv(BACK_REF) |
+              (.spec.template.metadata.annotations // {} )["dev-build-at"] = strenv(BUILD_TS)
+            else
+              .
+            end
+          else
+            .
+          end
         ' patch-images.yaml
 
     # 5) Commit & push (siempre hay diff gracias a la anotación)
