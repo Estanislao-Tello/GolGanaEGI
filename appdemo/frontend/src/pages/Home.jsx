@@ -6,7 +6,7 @@ const Home = () => {
   return (
     <div className="home-container">
       <section className="hero-section">
-        <h1>¡Bienvenido a Golgana!aaaaaaaaaaaaaaaaaaaaaaaaa</h1>
+        <h1>¡Bienvenido a Golgana nein</h1>
         <p>
           Tu plataforma integral para la gestión y reserva de canchas de fútbol. 
           Jugate unos fulbachos, comete unos choriz y tomate unas birras.
