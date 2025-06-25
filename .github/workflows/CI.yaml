@@ -62,7 +62,7 @@ jobs:
         path:       manifests
         ref:        main
 
-        # 4) Parchear overlay DEV
+    # 4) Parchear overlay DEV
     - name: Patch images & annotate build-id
       working-directory: manifests/ManifiestosEGI/overlays/dev
       env:
@@ -70,27 +70,39 @@ jobs:
         BACK_REF:  "${{ env.IMAGE_BACK }}:${{ env.TAG }}"
         BUILD_TS:  "${{ github.run_id }}-${{ github.run_attempt }}"
       run: |
-        # Instalar yq v4
-        sudo curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
-        sudo chmod +x /usr/local/bin/yq
+        # Instalar yq v4 (última estable)
+        curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+          -o yq && chmod +x yq && sudo mv yq /usr/local/bin/
 
-        # Parcheo seguro: devuelve SIEMPRE cada documento completo
-        yq -i '
-          if (.kind == "Deployment") then
-            if (.metadata.name == "pagina-web") then
-              (.spec.template.spec.containers[] | select(.name == "pagina-web").image) = strenv(FRONT_REF) |
-              (.spec.template.metadata.annotations // {})["dev-build-at"] = strenv(BUILD_TS)
-            elif (.metadata.name == "backend") then
-              (.spec.template.spec.containers[] | select(.name == "backend").image) = strenv(BACK_REF) |
-              (.spec.template.metadata.annotations // {})["dev-build-at"] = strenv(BUILD_TS)
-            else
-              .
-            end
-          else
-            .
-          end
+        ############  IMÁGENES  ############
+        # Front
+        yq eval -i '
+          (select(.kind == "Deployment" and .metadata.name == "pagina-web")
+            .spec.template.spec.containers[]
+            | select(.name == "pagina-web").image) = strenv(FRONT_REF)
         ' patch-images.yaml
 
+        # Back
+        yq eval -i '
+          (select(.kind == "Deployment" and .metadata.name == "backend")
+            .spec.template.spec.containers[]
+            | select(.name == "backend").image) = strenv(BACK_REF)
+        ' patch-images.yaml
+
+        ############  ANOTACIONES  ############
+        # Front
+        yq eval -i '
+          (select(.kind == "Deployment" and .metadata.name == "pagina-web")
+            .spec.template.metadata.annotations // {})
+            ["dev-build-at"] = strenv(BUILD_TS)
+        ' patch-images.yaml
+
+        # Back
+        yq eval -i '
+          (select(.kind == "Deployment" and .metadata.name == "backend")
+            .spec.template.metadata.annotations // {})
+            ["dev-build-at"] = strenv(BUILD_TS)
+        ' patch-images.yaml
 
     # 5) Commit & push manifiestos
     - name: Commit & push manifests
