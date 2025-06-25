@@ -115,5 +115,5 @@ jobs:
         # Añadimos el archivo que podría haber cambiado
         git add overlays/dev/patch-images.yaml
 
-          git commit -m "ci(dev): build ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} – tag ${TAG}"
-          git push origin main
+        git commit -m "ci(dev): build ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} – tag ${TAG}"
+        git push origin main
