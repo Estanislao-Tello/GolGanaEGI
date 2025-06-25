@@ -82,7 +82,13 @@ jobs:
             | select(.name == "pagina-web").image) = strenv(FRONT_REF)
         ' patch-images.yaml
 
-        
+                # Back
+        yq eval -i '
+          (select(.kind == "Deployment" and .metadata.name == "backend")
+            .spec.template.spec.containers[]
+            | select(.name == "backend").image) = strenv(BACK_REF)
+        ' patch-images.yaml
+
 
         ############  ANOTACIONES  ############
         # Front
@@ -99,12 +105,20 @@ jobs:
             ["dev-build-at"] = strenv(BUILD_TS)
         ' patch-images.yaml
 
-    # 5) Commit & push manifiestos
+       # 5) Commit & push manifiestos (solo si hay cambios)
     - name: Commit & push manifests
       working-directory: manifests/ManifiestosEGI
       run: |
         git config user.name  "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
+
+        # Añadimos el archivo que podría haber cambiado
         git add overlays/dev/patch-images.yaml
-        git commit -m "ci(dev): build ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} – tag ${TAG}"
-        git push origin main
+
+        # ¿Hay algo que commitear?
+        if git diff --cached --quiet; then
+          echo "· No hay cambios en patch-images.yaml — se omite commit/push"
+        else
+          git commit -m "ci(dev): build ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} – tag ${TAG}"
+          git push origin main
+        fi
