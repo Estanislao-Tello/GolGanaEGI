@@ -82,12 +82,7 @@ jobs:
             | select(.name == "pagina-web").image) = strenv(FRONT_REF)
         ' patch-images.yaml
 
-        # Back
-        yq eval -i '
-          (select(.kind == "Deployment" and .metadata.name == "backend")
-            .spec.template.spec.containers[]
-            | select(.name == "backend").image) = strenv(BACK_REF)
-        ' patch-images.yaml
+        
 
         ############  ANOTACIONES  ############
         # Front
