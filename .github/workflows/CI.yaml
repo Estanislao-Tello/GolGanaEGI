@@ -1,118 +1,103 @@
-# .github/workflows/ci-dev.yml
-# -------------------------------------------------------------------
-# Build 🐳 · Push · Patch DEV Manifests
-#   • Publica imágenes :latest (front + back)
-#   • Añade/actualiza spec.template.metadata.annotations.build-id
-#     con un valor diferente en cada ejecución
-#   • Commit sólo si el patch cambió
-# -------------------------------------------------------------------
+# .github/workflows/ci-dev.yaml
+# ------------------------------------------------------------------
+# Build 🐳 · Push · Patch Manifests (dev)
+# ------------------------------------------------------------------
 
-name: Build 🐳 · Push · Patch DEV Manifests
+name: Build 🐳 · Push · Patch Manifests (dev)
 
 on:
   push:
-    branches: [ dev ]
+    branches: [dev]            # solo la rama dev
 
 env:
+  # ⇣⇣ CAMBIA estos valores a los tuyos ⇣⇣
+  REGISTRY: docker.io          # Docker Hub; deja vacío si prefieres el “docker.io/” implícito
   IMAGE_FRONT: ignaciosa/front
-  IMAGE_BACK : ignaciosa/back
-  TAG        : latest
+  IMAGE_BACK:  ignaciosa/back
   MANIFESTS_REPO: Estanislao-Tello/ManifiestosEGI
+  PATCH_FILE: ManifiestosEGI/overlays/dev/patch-images.yaml
 
 jobs:
   build-push-patch:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
+      contents: read            # clonar tu repo de código
+      packages: write           # subir imágenes (no usado en Docker Hub, pero lo dejamos)
+      # -- No hace falta id-token con Docker Hub --
 
     steps:
-    # 1) Checkout del código fuente
-    - uses: actions/checkout@v4
+    # 1) Checkout de tu código fuente (rama dev)
+    - name: Checkout source
+      uses: actions/checkout@v4
 
-    # 2) Build & push imágenes :latest
-    - uses: docker/setup-buildx-action@v3
+    # 2) Calcular el próximo tag v<n> (basado en nº de commits)
+    - name: Compute version tag
+      id: meta
+      run: |
+        commits=$(git rev-list --count HEAD)
+        echo "tag=v$commits" >> "$GITHUB_OUTPUT"
 
-    - name: Docker Hub login
+    # 3) Set up Docker Buildx
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    # 4) Login a Docker Hub
+    - name: Login to Docker Hub
       uses: docker/login-action@v3
       with:
-        username: ${{ secrets.CR_USER }}
-        password: ${{ secrets.CR_PAT }}
+        username: ${{ secrets.CR_USER }}   # tu usuario de Docker Hub
+        password: ${{ secrets.CR_PAT }}    # un Access Token / contraseña
 
-    - name: Build & push frontend
+    # 5) Build & push 🔸 Frontend 🔸
+    - name: Build and push frontend image
       uses: docker/build-push-action@v5
       with:
-        context: ./appdemo/frontend
-        file:   ./appdemo/frontend/Dockerfile
-        push:   true
-        tags:   ${{ env.IMAGE_FRONT }}:${{ env.TAG }}
+        context: ./front                # ↙ cámbialo si tu Dockerfile está en otra ruta
+        push: true
+        tags: |
+          ${{ env.IMAGE_FRONT }}:${{ steps.meta.outputs.tag }}
 
-    - name: Build & push backend
+    # 6) Build & push 🔹 Backend 🔹
+    - name: Build and push backend image
       uses: docker/build-push-action@v5
       with:
-        context: ./appdemo/backend
-        file:   ./appdemo/backend/Dockerfile
-        push:   true
-        tags:   ${{ env.IMAGE_BACK }}:${{ env.TAG }}
+        context: ./back                 # ↙ cámbialo si tu Dockerfile está en otra ruta
+        push: true
+        tags: |
+          ${{ env.IMAGE_BACK }}:${{ steps.meta.outputs.tag }}
 
-    # 3) Checkout repo de manifiestos
-    - uses: actions/checkout@v4
+    # 7) Checkout del repo de manifiestos en ./manifests
+    - name: Checkout manifests repo
+      uses: actions/checkout@v4
       with:
         repository: ${{ env.MANIFESTS_REPO }}
-        token:      ${{ secrets.GIT_PAT }}
-        path:       manifests
-        ref:        main          # ajusta si tu rama es otra
+        token: ${{ secrets.GH_PAT }}      # PAT con permiso de push
+        path: manifests
 
-    # 4) Parchear overlay DEV
-    - name: Patch images + build-id annotation
-      working-directory: manifests/ManifiestosEGI/overlays/dev
+    # 8) Instalar yq v4 (para editar YAML)
+    - name: Install yq
+      run: |
+        sudo wget -q https://github.com/mikefarah/yq/releases/download/v4.43.1/yq_linux_amd64 \
+          -O /usr/local/bin/yq && sudo chmod +x /usr/local/bin/yq
+
+    # 9) Actualizar el newTag en patch-images.yaml
+    - name: Patch image tag in overlay/dev
       env:
-        FRONT_REF: "${{ env.IMAGE_FRONT }}:${{ env.TAG }}"
-        BACK_REF : "${{ env.IMAGE_BACK }}:${{ env.TAG }}"
-        BUILD_ID : "${{ github.run_id }}-${{ github.run_attempt }}"
+        NEW_TAG: ${{ steps.meta.outputs.tag }}
+      working-directory: manifests
       run: |
-        # Instalar yq v4
-        curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
-          -o yq && chmod +x yq && sudo mv yq /usr/local/bin/
+        yq -i '.images[].newTag = strenv(NEW_TAG)' "$PATCH_FILE"
 
-        ################  pagina-web  ################
-        yq eval -i '
-          if (.kind == "Deployment" and .metadata.name == "pagina-web") then
-            # 1) Imagen
-            (.spec.template.spec.containers[] | select(.name == "pagina-web").image)
-              = strenv(FRONT_REF) |
-            # 2) Anotación (crea bloque si no existe)
-            (.spec.template.metadata.annotations //= {}) |
-            (.spec.template.metadata.annotations.build-id) = strenv(BUILD_ID)
-          else
-            .
-          end
-        ' patch-images.yaml
-
-        ################  backend  ###################
-        yq eval -i '
-          if (.kind == "Deployment" and .metadata.name == "backend") then
-            (.spec.template.spec.containers[] | select(.name == "backend").image)
-              = strenv(BACK_REF) |
-            (.spec.template.metadata.annotations //= {}) |
-            (.spec.template.metadata.annotations.build-id) = strenv(BUILD_ID)
-          else
-            .
-          end
-        ' patch-images.yaml
-
-    # 5) Commit & push sólo si hay cambios
-    - name: Commit & push manifests
-      working-directory: manifests/ManifiestosEGI
+    # 10) Commit & push si hubo cambios
+    - name: Commit and push patch
+      working-directory: manifests
       run: |
-        git config user.name  "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add overlays/dev/patch-images.yaml
-
-        if git diff --cached --quiet; then
-          echo "· Sin cambios: omito commit/push"
-          exit 0
+        git config user.email "actions@github.com"
+        git config user.name  "github-actions"
+        if git status --porcelain | grep .; then
+          git add "$PATCH_FILE"
+          git commit -m "ci(dev): update image tag to ${{ steps.meta.outputs.tag }} [skip ci]"
+          git push
+        else
+          echo "No hay cambios que commitear"
         fi
-
-        git commit -m "ci(dev): build ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} – tag ${TAG}"
-        git push origin main
