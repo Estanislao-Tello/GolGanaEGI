@@ -1,66 +1,85 @@
-name: Build & Publish 🐳
+# .github/workflows/cd-main.yaml
+# -------------------------------------------------------------------
+# Promote latest v<n> image to prod manifests  (main branch)
+# -------------------------------------------------------------------
+
+name: Promote to Prod (main)
 
 on:
   push:
     branches: [main]
 
+env:
+  IMAGE_FRONT: ignaciosa/front
+  IMAGE_BACK:  ignaciosa/back
+  MANIFESTS_REPO: Estanislao-Tello/ManifiestosEGI
+  PATCH_FILE: ManifiestosEGI/overlays/prod/patch-images.yaml
+
 jobs:
-  docker:
+  promote:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    # 1) Obtener el último v<n> de Docker Hub
+    - name: Determine latest version tag
+      id: version
+      env:
+        REPO: ${{ env.IMAGE_FRONT }}
+      run: |
+        API="https://registry.hub.docker.com/v2/repositories/${REPO}/tags?page_size=100"
+        latest=$(curl -s "$API" \
+                 | grep -o '"name":"v[0-9]\+"' \
+                 | sed -E 's/"name":"(v[0-9]+)"/\1/' \
+                 | sort -V | tail -n1)
+        if [ -z "$latest" ]; then
+          echo "❌  No se encontró ningún tag v* en Docker Hub"; exit 1
+        fi
+        echo "Último tag encontrado: $latest"
+        echo "tag=$latest" >> "$GITHUB_OUTPUT"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+    # 2) Clonar el repo de manifiestos
+    - name: Checkout manifests repository
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ env.MANIFESTS_REPO }}
+        token: ${{ secrets.GIT_PAT }}     # PAT con permiso de push
+        path: manifests
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.CR_USER }}
-          password: ${{ secrets.CR_PAT }}
+    # 3) Instalar yq
+    - name: Install yq
+      run: |
+        sudo wget -q https://github.com/mikefarah/yq/releases/download/v4.43.1/yq_linux_amd64 \
+          -O /usr/local/bin/yq && sudo chmod +x /usr/local/bin/yq
 
-      - name: Build and push frontend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./appdemo/frontend
-          file: ./appdemo/frontend/Dockerfile
-          push: true
-          tags: ignaciosa/front:${{ github.sha }}
+    # 4) Parchear patch-images.yaml con el nuevo tag
+    - name: Patch prod manifest
+      working-directory: manifests
+      env:
+        TAG:   ${{ steps.version.outputs.tag }}
+        PATCH: ${{ env.PATCH_FILE }}
+      run: |
+        yq e -i '
+          select(.metadata.name == "pagina-web")
+          .spec.template.spec.containers[].image = "ignaciosa/front:" + env(TAG)
+        ' "$PATCH"
 
-      - name: Build and push backend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./appdemo/backend
-          file: ./appdemo/backend/Dockerfile
-          push: true
-          tags: ignaciosa/back:${{ github.sha }}
+        yq e -i '
+          select(.metadata.name == "backend")
+          .spec.template.spec.containers[].image = "ignaciosa/back:" + env(TAG)
+        ' "$PATCH"
 
-      # 🧬 Actualiza los manifiestos con los nuevos tags
-      - name: Checkout manifests repo
-        uses: actions/checkout@v4
-        with:
-          repository: IgnacioSaAn/manifiestosFinal
-          token: ${{ secrets.GIT_PAT }}
-          path: manifests
-          ref: dev
-
-      - name: Update image tags in manifests
-        run: |
-          cd manifests
-          git switch dev
-
-          # Actualiza imagen de frontend
-          yq e -i '.spec.template.spec.containers[0].image = "ignaciosa/front:${{ github.sha }}"' deployment.yaml
-
-          # Actualiza imagen de backend
-          yq e -i '.spec.template.spec.containers[0].image = "ignaciosa/back:${{ github.sha }}"' deployment_back.yaml
-
-          git config user.email "ci-bot@users.noreply.github.com"
-          git config user.name  "ci-bot"
-          git commit -am "ci: update front/back image tags to ${{ github.sha }}"
-          git push origin dev
+    # 5) Commit & push si hubo cambios
+    - name: Commit and push
+      working-directory: manifests
+      env:
+        TAG: ${{ steps.version.outputs.tag }}
+      run: |
+        git config user.email "actions@github.com"
+        git config user.name  "github-actions"
+        if git status --porcelain | grep .; then
+          git add "$PATCH_FILE"
+          git commit -m "cd(prod): promote ${TAG} [skip ci]"
+          git push
+        else
+          echo "No hay cambios que commitear"
+        fi
