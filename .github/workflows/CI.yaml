@@ -1,85 +1,176 @@
-# .github/workflows/cd-main.yaml
-# -------------------------------------------------------------------
-# Promote latest v<n> image to prod manifests  (main branch)
-# -------------------------------------------------------------------
+# .github/workflows/ci-cd.yaml
+# ------------------------------------------------------------------
+# CI (dev)  +  CD (main)  en un solo archivo
+# ------------------------------------------------------------------
 
-name: Promote to Prod (main)
+name: Build & Promote
 
 on:
   push:
-    branches: [main]
+    branches: [dev, main]
 
 env:
+  REGISTRY: docker.io
   IMAGE_FRONT: ignaciosa/front
   IMAGE_BACK:  ignaciosa/back
   MANIFESTS_REPO: Estanislao-Tello/ManifiestosEGI
-  PATCH_FILE: ManifiestosEGI/overlays/prod/patch-images.yaml
 
+# ------------------------------------------------------------------
+#  JOB 1: CI en rama dev  →  build, push, patch overlay/dev
+# ------------------------------------------------------------------
 jobs:
-  promote:
+  ci-dev:
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      PATCH_FILE: ManifiestosEGI/overlays/dev/patch-images.yaml
 
     steps:
-    # 1) Obtener el último v<n> de Docker Hub
-    - name: Determine latest version tag
-      id: version
-      env:
-        REPO: ${{ env.IMAGE_FRONT }}
-      run: |
-        API="https://registry.hub.docker.com/v2/repositories/${REPO}/tags?page_size=100"
-        latest=$(curl -s "$API" \
-                 | grep -o '"name":"v[0-9]\+"' \
-                 | sed -E 's/"name":"(v[0-9]+)"/\1/' \
-                 | sort -V | tail -n1)
-        if [ -z "$latest" ]; then
-          echo "❌  No se encontró ningún tag v* en Docker Hub"; exit 1
-        fi
-        echo "Último tag encontrado: $latest"
-        echo "tag=$latest" >> "$GITHUB_OUTPUT"
+      # 1) Checkout código
+      - uses: actions/checkout@v4
 
-    # 2) Clonar el repo de manifiestos
-    - name: Checkout manifests repository
-      uses: actions/checkout@v4
-      with:
-        repository: ${{ env.MANIFESTS_REPO }}
-        token: ${{ secrets.GIT_PAT }}     # PAT con permiso de push
-        path: manifests
+      # 2) Próximo v<n> desde Docker Hub
+      - name: Compute next version tag
+        id: meta
+        env:
+          REPO: ${{ env.IMAGE_FRONT }}
+        run: |
+          ns=$(cut -d/ -f1 <<<"$REPO")
+          repo=$(cut -d/ -f2 <<<"$REPO")
+          api="https://registry.hub.docker.com/v2/repositories/${ns}/${repo}/tags?page_size=100"
+          last=$(curl -s "$api" | grep -o '"name":"v[0-9]\+"' | sed -E 's/"name":"v([0-9]+)"/\1/' | sort -n | tail -1)
+          next=$(( ${last:-0} + 1 ))
+          echo "tag=v$next" >>"$GITHUB_OUTPUT"
 
-    # 3) Instalar yq
-    - name: Install yq
-      run: |
-        sudo wget -q https://github.com/mikefarah/yq/releases/download/v4.43.1/yq_linux_amd64 \
-          -O /usr/local/bin/yq && sudo chmod +x /usr/local/bin/yq
+      # 3) Buildx + login
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.CR_USER }}
+          password: ${{ secrets.CR_PAT }}
 
-    # 4) Parchear patch-images.yaml con el nuevo tag
-    - name: Patch prod manifest
-      working-directory: manifests
-      env:
-        TAG:   ${{ steps.version.outputs.tag }}
-        PATCH: ${{ env.PATCH_FILE }}
-      run: |
-        yq e -i '
-          select(.metadata.name == "pagina-web")
-          .spec.template.spec.containers[].image = "ignaciosa/front:" + env(TAG)
-        ' "$PATCH"
+      # 4) Build & push imágenes
+      - name: Build & push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./appdemo/frontend
+          push: true
+          tags: ${{ env.IMAGE_FRONT }}:${{ steps.meta.outputs.tag }}
 
-        yq e -i '
-          select(.metadata.name == "backend")
-          .spec.template.spec.containers[].image = "ignaciosa/back:" + env(TAG)
-        ' "$PATCH"
+      - name: Build & push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./appdemo/backend
+          push: true
+          tags: ${{ env.IMAGE_BACK }}:${{ steps.meta.outputs.tag }}
 
-    # 5) Commit & push si hubo cambios
-    - name: Commit and push
-      working-directory: manifests
-      env:
-        TAG: ${{ steps.version.outputs.tag }}
-      run: |
-        git config user.email "actions@github.com"
-        git config user.name  "github-actions"
-        if git status --porcelain | grep .; then
-          git add "$PATCH_FILE"
-          git commit -m "cd(prod): promote ${TAG} [skip ci]"
-          git push
-        else
-          echo "No hay cambios que commitear"
-        fi
+      # 5) Checkout manifiestos
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.MANIFESTS_REPO }}
+          token: ${{ secrets.GIT_PAT }}
+          path: manifests
+
+      # 6) yq
+      - run: |
+          sudo wget -q https://github.com/mikefarah/yq/releases/download/v4.43.1/yq_linux_amd64 \
+            -O /usr/local/bin/yq && sudo chmod +x /usr/local/bin/yq
+
+      # 7) Patch overlay/dev
+      - name: Patch dev manifest
+        working-directory: manifests
+        env:
+          TAG:   ${{ steps.meta.outputs.tag }}
+          PATCH: ${{ env.PATCH_FILE }}
+        run: |
+          yq e -i '
+            select(.metadata.name == "pagina-web")
+            .spec.template.spec.containers[].image = "ignaciosa/front:" + env(TAG)
+          ' "$PATCH"
+          yq e -i '
+            select(.metadata.name == "backend")
+            .spec.template.spec.containers[].image = "ignaciosa/back:" + env(TAG)
+          ' "$PATCH"
+
+      # 8) Commit sólo si cambió
+      - name: Commit & push
+        working-directory: manifests
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name  "github-actions"
+          if git status --porcelain | grep .; then
+            git add "$PATCH_FILE"
+            git commit -m "ci(dev): promote ${{ steps.meta.outputs.tag }} [skip ci]"
+            git push
+          else
+            echo "No hay cambios"
+          fi
+
+# ------------------------------------------------------------------
+#  JOB 2: CD en rama main →  patch overlay/prod con último v<n>
+# ------------------------------------------------------------------
+  cd-main:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      PATCH_FILE: ManifiestosEGI/overlays/prod/patch-images.yaml
+
+    steps:
+      # 1) Último v<n>
+      - name: Determine latest version tag
+        id: version
+        env:
+          REPO: ${{ env.IMAGE_FRONT }}
+        run: |
+          api="https://registry.hub.docker.com/v2/repositories/${REPO}/tags?page_size=100"
+          tag=$(curl -s "$api" | grep -o '"name":"v[0-9]\+"' | sed -E 's/"name":"(v[0-9]+)"/\1/' | sort -V | tail -1)
+          [ -z "$tag" ] && { echo "No v tags"; exit 1; }
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+
+      # 2) Checkout manifiestos
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.MANIFESTS_REPO }}
+          token: ${{ secrets.GIT_PAT }}
+          path: manifests
+
+      # 3) yq
+      - run: |
+          sudo wget -q https://github.com/mikefarah/yq/releases/download/v4.43.1/yq_linux_amd64 \
+            -O /usr/local/bin/yq && sudo chmod +x /usr/local/bin/yq
+
+      # 4) Patch overlay/prod
+      - name: Patch prod manifest
+        working-directory: manifests
+        env:
+          TAG:   ${{ steps.version.outputs.tag }}
+          PATCH: ${{ env.PATCH_FILE }}
+        run: |
+          yq e -i '
+            select(.metadata.name == "pagina-web")
+            .spec.template.spec.containers[].image = "ignaciosa/front:" + env(TAG)
+          ' "$PATCH"
+          yq e -i '
+            select(.metadata.name == "backend")
+            .spec.template.spec.containers[].image = "ignaciosa/back:" + env(TAG)
+          ' "$PATCH"
+
+      # 5) Commit si cambió
+      - name: Commit & push
+        working-directory: manifests
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name  "github-actions"
+          if git status --porcelain | grep .; then
+            git add "$PATCH_FILE"
+            git commit -m "cd(prod): promote ${TAG} [skip ci]"
+            git push
+          else
+            echo "No hay cambios"
+          fi
