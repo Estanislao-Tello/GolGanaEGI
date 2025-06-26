@@ -59,7 +59,7 @@ const Login = () => {
   return (
     <div className="login-container">
       <div className="login-header">
-        <div className="login-logo">GOLGANA</div>
+        <div className="login-logo">GOLGANA aAaAaA</div>
         <h1 className="login-title">Iniciar Sesión</h1>
         <p className="login-subtitle">
           Bienvenido de nuevo. Accede a tu cuenta para gestionar tus predios y reservas.
